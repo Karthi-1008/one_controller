@@ -58,8 +58,8 @@ class AdbClient(private val context: Context) {
             val s = Socket()
             s.tcpNoDelay = true
             s.keepAlive = true
-            s.soTimeout = 4000
-            s.connect(InetSocketAddress(host, port), 4000)
+            s.soTimeout = 45000 // 45 seconds to allow user to accept "Allow USB debugging" prompt on TV
+            s.connect(InetSocketAddress(host, port), 6000)
             socket = s
             inStream = BufferedInputStream(s.getInputStream(), 65536)
             outStream = BufferedOutputStream(s.getOutputStream(), 65536)
@@ -77,6 +77,7 @@ class AdbClient(private val context: Context) {
                     A_CNXN -> {
                         val banner = String(msg.data, Charsets.UTF_8)
                         Log.d(TAG, "Connected to ADB device: $banner")
+                        s.soTimeout = 15000 // Reset to standard 15s timeout for shell commands
                         isConnected = true
                         return@withContext true
                     }

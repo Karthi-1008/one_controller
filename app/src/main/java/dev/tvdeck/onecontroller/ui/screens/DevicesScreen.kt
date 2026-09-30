@@ -110,27 +110,30 @@ fun DevicesScreen(transportManager: TransportManager) {
             modifier = Modifier.fillMaxSize(),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Discovered Devices Section
-            item {
+            // Discovered Devices Section (exclude ones already in saved list)
+            val savedHosts = savedDevices.map { it.host }.toSet()
+            val unSavedDiscovered = discoveredDevices.filter { it.host !in savedHosts }
+
+            item(key = "header_discovered") {
                 Text(
-                    text = "DISCOVERED ON WI-FI (${discoveredDevices.size})",
+                    text = "DISCOVERED ON WI-FI (${unSavedDiscovered.size})",
                     fontSize = 11.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = ElectricCyan
                 )
             }
 
-            if (discoveredDevices.isEmpty()) {
-                item {
+            if (unSavedDiscovered.isEmpty()) {
+                item(key = "empty_discovered") {
                     Text(
-                        text = if (isScanning) "Searching for Android TVs on your Wi-Fi..." else "No TVs found via mDNS. Try entering IP manually.",
+                        text = if (isScanning) "Searching for Android TVs on your Wi-Fi..." else "No new TVs discovered. Tap 'Manual IP' to add by IP.",
                         fontSize = 12.sp,
                         color = TextSecondary,
                         modifier = Modifier.padding(vertical = 8.dp)
                     )
                 }
             } else {
-                items(discoveredDevices, key = { it.host }) { dev ->
+                items(unSavedDiscovered, key = { "discovered_${it.host}" }) { dev ->
                     TvDeviceCard(
                         device = dev,
                         isActive = activeDevice?.host == dev.host,
@@ -155,9 +158,9 @@ fun DevicesScreen(transportManager: TransportManager) {
 
             // Saved Devices Section
             if (savedDevices.isNotEmpty()) {
-                item {
+                item(key = "header_saved") {
                     Text(
-                        text = "SAVED DEVICES",
+                        text = "SAVED DEVICES (${savedDevices.size})",
                         fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = TextSecondary,
@@ -165,7 +168,7 @@ fun DevicesScreen(transportManager: TransportManager) {
                     )
                 }
 
-                items(savedDevices, key = { it.id }) { dev ->
+                items(savedDevices, key = { "saved_${it.id}" }) { dev ->
                     TvDeviceCard(
                         device = dev,
                         isActive = activeDevice?.host == dev.host,
@@ -338,6 +341,35 @@ private fun TvDeviceCard(
                         fontSize = 11.sp,
                         color = TextSecondary
                     )
+                    Row(
+                        modifier = Modifier.padding(top = 2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        if (device.isPairedAdb) {
+                            Text(
+                                text = "ADB Active",
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = BrightGreen,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(BrightGreen.copy(alpha = 0.15f))
+                                    .padding(horizontal = 4.dp, vertical = 1.dp)
+                            )
+                        }
+                        if (device.isPairedRemoteV2) {
+                            Text(
+                                text = "Remote v2 Paired",
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = ElectricCyan,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(ElectricCyan.copy(alpha = 0.15f))
+                                    .padding(horizontal = 4.dp, vertical = 1.dp)
+                            )
+                        }
+                    }
                     if (device.macAddress.isNotBlank()) {
                         Text(
                             text = "MAC: ${device.macAddress}",
@@ -348,14 +380,14 @@ private fun TvDeviceCard(
                 }
             }
 
-            Row {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 OutlinedButton(
                     onClick = onPairRemoteV2,
                     shape = RoundedCornerShape(8.dp),
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                     modifier = Modifier.padding(end = 6.dp)
                 ) {
-                    Text("Pair", fontSize = 11.sp)
+                    Text(if (device.isPairedRemoteV2) "Re-Pair" else "Pair v2", fontSize = 11.sp)
                 }
 
                 Button(

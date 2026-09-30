@@ -39,86 +39,131 @@ object CryptoManager {
             return Pair(cachedKeyPair!!, cachedClientCertificate!!)
         }
 
-        try {
-            val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-            if (ks.containsAlias(KEYSTORE_ALIAS)) {
-                val privKey = ks.getKey(KEYSTORE_ALIAS, null) as? PrivateKey
-                val cert = ks.getCertificate(KEYSTORE_ALIAS) as? X509Certificate
-                if (privKey != null && cert != null) {
-                    val pubKey = cert.publicKey
-                    val kp = KeyPair(pubKey, privKey)
-                    cachedKeyPair = kp
-                    cachedClientCertificate = cert
-                    return Pair(kp, cert)
-                }
-            }
-
-            // Generate new RSA 2048 keypair with self-signed certificate in AndroidKeyStore
-            val kpg = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_RSA, "AndroidKeyStore")
-            val spec = KeyGenParameterSpec.Builder(
-                KEYSTORE_ALIAS,
-                KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY
-            )
-                .setKeySize(2048)
-                .setCertificateSubject(X500Principal("CN=OneController, O=TVDeck, C=US"))
-                .setCertificateSerialNumber(BigInteger.valueOf(System.currentTimeMillis()))
-                .setCertificateNotBefore(Date(System.currentTimeMillis() - 86400000L))
-                .setCertificateNotAfter(Date(System.currentTimeMillis() + 20L * 365 * 86400000L))
-                .setDigests(KeyProperties.DIGEST_SHA256, KeyProperties.DIGEST_SHA1)
-                .setSignaturePaddings(KeyProperties.SIGNATURE_PADDING_RSA_PKCS1)
-                .build()
-
-            kpg.initialize(spec)
-            val kp = kpg.generateKeyPair()
-            val cert = ks.getCertificate(KEYSTORE_ALIAS) as X509Certificate
-
-            cachedKeyPair = kp
-            cachedClientCertificate = cert
-            return Pair(kp, cert)
-        } catch (e: Exception) {
-            Log.e(TAG, "AndroidKeyStore init failed, falling back to software key", e)
-            return getOrCreateSoftwareKeyAndCert(context)
-        }
-    }
-
-    private fun getOrCreateSoftwareKeyAndCert(context: Context): Pair<KeyPair, X509Certificate> {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val privB64 = prefs.getString("soft_tls_priv", null)
         val pubB64 = prefs.getString("soft_tls_pub", null)
+        val certB64 = prefs.getString("soft_tls_cert_der", null)
 
         val kf = KeyFactory.getInstance("RSA")
-        if (privB64 != null && pubB64 != null) {
-            val privKey = kf.generatePrivate(PKCS8EncodedKeySpec(Base64.decode(privB64, Base64.DEFAULT)))
-            val pubKey = kf.generatePublic(X509EncodedKeySpec(Base64.decode(pubB64, Base64.DEFAULT)))
-            val kp = KeyPair(pubKey, privKey)
-            val cert = generateSelfSignedCertificate(kp)
-            cachedKeyPair = kp
-            cachedClientCertificate = cert
-            return Pair(kp, cert)
+        val cf = java.security.cert.CertificateFactory.getInstance("X.509")
+
+        if (privB64 != null && pubB64 != null && certB64 != null) {
+            try {
+                val privKey = kf.generatePrivate(PKCS8EncodedKeySpec(Base64.decode(privB64, Base64.DEFAULT)))
+                val pubKey = kf.generatePublic(X509EncodedKeySpec(Base64.decode(pubB64, Base64.DEFAULT)))
+                val kp = KeyPair(pubKey, privKey)
+                val certBytes = Base64.decode(certB64, Base64.DEFAULT)
+                val cert = cf.generateCertificate(java.io.ByteArrayInputStream(certBytes)) as X509Certificate
+
+                cachedKeyPair = kp
+                cachedClientCertificate = cert
+                Log.d(TAG, "Loaded existing Remote v2 keypair and valid X.509 certificate")
+                return Pair(kp, cert)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed loading cached Remote v2 certificate, regenerating...", e)
+            }
         }
 
+        // Generate new RSA 2048 keypair
         val kpg = KeyPairGenerator.getInstance("RSA")
         kpg.initialize(2048)
         val kp = kpg.generateKeyPair()
+
+        // Generate compliant RFC 5280 self-signed X.509 certificate (CN=atvremote, 20-year validity)
+        val cert = generateCompliantX509Certificate(kp)
+
         prefs.edit()
             .putString("soft_tls_priv", Base64.encodeToString(kp.private.encoded, Base64.DEFAULT))
             .putString("soft_tls_pub", Base64.encodeToString(kp.public.encoded, Base64.DEFAULT))
+            .putString("soft_tls_cert_der", Base64.encodeToString(cert.encoded, Base64.DEFAULT))
             .apply()
 
-        val cert = generateSelfSignedCertificate(kp)
         cachedKeyPair = kp
         cachedClientCertificate = cert
+        Log.d(TAG, "Generated and saved new RFC 5280 X.509 certificate (CN=atvremote, ${cert.encoded.size} bytes)")
         return Pair(kp, cert)
     }
 
-    private fun generateSelfSignedCertificate(keyPair: KeyPair): X509Certificate {
-        // Minimal valid dummy X509 cert representation for fallback
-        val ks = KeyStore.getInstance(KeyStore.getDefaultType()).apply { load(null, null) }
-        val cert = ks.getCertificate("dummy") as? X509Certificate
-        if (cert != null) return cert
+    private fun derWrap(tag: Int, content: ByteArray): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        out.write(tag)
+        val len = content.size
+        if (len < 128) {
+            out.write(len)
+        } else if (len < 256) {
+            out.write(0x81)
+            out.write(len)
+        } else {
+            out.write(0x82)
+            out.write((len ushr 8) and 0xFF)
+            out.write(len and 0xFF)
+        }
+        out.write(content, 0, len)
+        return out.toByteArray()
+    }
 
-        // Return a mock wrapper or generated X509
-        return SimpleX509Certificate(keyPair.public as RSAPublicKey)
+    private fun derSequence(vararg parts: ByteArray): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        for (p in parts) {
+            out.write(p, 0, p.size)
+        }
+        return derWrap(0x30, out.toByteArray())
+    }
+
+    private fun generateCompliantX509Certificate(kp: KeyPair): X509Certificate {
+        // 1. version [0] EXPLICIT INTEGER 2 (v3)
+        val v3Int = derWrap(0x02, byteArrayOf(0x02))
+        val version = derWrap(0xA0, v3Int)
+
+        // 2. serialNumber INTEGER (positive)
+        val serial = derWrap(0x02, BigInteger.valueOf(System.currentTimeMillis()).abs().toByteArray())
+
+        // 3. signature AlgorithmIdentifier: sha256WithRSAEncryption (1.2.840.113549.1.1.11) with NULL param
+        val sigAlg = byteArrayOf(
+            0x30.toByte(), 0x0d.toByte(),
+            0x06.toByte(), 0x09.toByte(), 0x2a.toByte(), 0x86.toByte(), 0x48.toByte(), 0x86.toByte(),
+            0xf7.toByte(), 0x0d.toByte(), 0x01.toByte(), 0x01.toByte(), 0x0b.toByte(),
+            0x05.toByte(), 0x00.toByte()
+        )
+
+        // 4. issuer: SEQUENCE { SET { SEQUENCE { OID 2.5.4.3 (commonName), UTF8String "atvremote" } } }
+        val cnOid = byteArrayOf(0x06, 0x03, 0x55, 0x04, 0x03)
+        val cnVal = derWrap(0x0c, "atvremote".toByteArray(Charsets.UTF_8))
+        val atvSeq = derWrap(0x30, cnOid + cnVal)
+        val atvSet = derWrap(0x31, atvSeq)
+        val issuer = derWrap(0x30, atvSet)
+
+        // 5. validity: SEQUENCE { UTCTime "240101000000Z", UTCTime "440101000000Z" } (2024 to 2044)
+        val notBefore = derWrap(0x17, "240101000000Z".toByteArray(Charsets.US_ASCII))
+        val notAfter = derWrap(0x17, "440101000000Z".toByteArray(Charsets.US_ASCII))
+        val validity = derWrap(0x30, notBefore + notAfter)
+
+        // 6. subject: same as issuer (CN=atvremote)
+        val subject = issuer
+
+        // 7. subjectPublicKeyInfo: standard DER X.509 format
+        val spki = kp.public.encoded
+
+        // TBSCertificate SEQUENCE
+        val tbs = derSequence(version, serial, sigAlg, issuer, validity, subject, spki)
+
+        // Sign with private key using SHA256withRSA
+        val signer = Signature.getInstance("SHA256withRSA")
+        signer.initSign(kp.private)
+        signer.update(tbs)
+        val rawSig = signer.sign()
+
+        // signatureValue BIT STRING (0x00 unused bits prefix)
+        val sigBitString = ByteArray(rawSig.size + 1)
+        sigBitString[0] = 0x00
+        System.arraycopy(rawSig, 0, sigBitString, 1, rawSig.size)
+        val signature = derWrap(0x03, sigBitString)
+
+        // Final Certificate SEQUENCE
+        val certDer = derSequence(tbs, sigAlg, signature)
+
+        val cf = java.security.cert.CertificateFactory.getInstance("X.509")
+        return cf.generateCertificate(java.io.ByteArrayInputStream(certDer)) as X509Certificate
     }
 
     fun getSslContext(context: Context, onServerCertReceived: ((X509Certificate) -> Unit)? = null): SSLContext {
@@ -173,14 +218,21 @@ object CryptoManager {
         md.update(toUnsignedBigEndian(serverModulus))
         md.update(toUnsignedBigEndian(serverExponent))
 
-        val codeHexRemaining = pairingCode.substring(2)
+        val cleanCode = pairingCode.trim().replace(" ", "").removePrefix("0x").removePrefix("0X").uppercase()
+        val codeHexRemaining = if (cleanCode.length > 2) cleanCode.substring(2) else cleanCode
         md.update(hexStringToByteArray(codeHexRemaining))
 
         val digest = md.digest()
 
-        val expectedFirstByte = pairingCode.substring(0, 2).toInt(16).toByte()
-        if (digest[0] != expectedFirstByte) {
-            Log.w(TAG, "Pairing secret first byte check mismatch: got ${digest[0]} vs expected $expectedFirstByte")
+        if (cleanCode.length >= 2) {
+            try {
+                val expectedFirstByte = cleanCode.substring(0, 2).toInt(16).toByte()
+                if (digest[0] != expectedFirstByte) {
+                    Log.w(TAG, "Pairing secret first byte check mismatch: got ${digest[0]} vs expected $expectedFirstByte")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed parsing first 2 hex digits of code: $cleanCode")
+            }
         }
         return digest
     }
@@ -279,35 +331,5 @@ object CryptoManager {
 
         val b64 = Base64.encodeToString(buffer.array(), Base64.NO_WRAP)
         return "$b64 onecontroller@tvdeck\u0000"
-    }
-
-    // Minimal self-signed certificate wrapper fallback
-    private class SimpleX509Certificate(private val rsaPublicKey: RSAPublicKey) : X509Certificate() {
-        override fun getPublicKey(): PublicKey = rsaPublicKey
-        override fun toString(): String = "SimpleX509Certificate(OneController)"
-        override fun hasUnsupportedCriticalExtension(): Boolean = false
-        override fun getCriticalExtensionOIDs(): MutableSet<String>? = null
-        override fun getNonCriticalExtensionOIDs(): MutableSet<String>? = null
-        override fun getExtensionValue(oid: String?): ByteArray? = null
-        override fun checkValidity() {}
-        override fun checkValidity(date: Date?) {}
-        override fun getVersion(): Int = 3
-        override fun getSerialNumber(): BigInteger = BigInteger.ONE
-        override fun getIssuerDN(): Principal = X500Principal("CN=OneController")
-        override fun getSubjectDN(): Principal = X500Principal("CN=OneController")
-        override fun getNotBefore(): Date = Date(0)
-        override fun getNotAfter(): Date = Date(System.currentTimeMillis() + 315360000000L)
-        override fun getTBSCertificate(): ByteArray = ByteArray(0)
-        override fun getSignature(): ByteArray = ByteArray(0)
-        override fun getSigAlgName(): String = "SHA256withRSA"
-        override fun getSigAlgOID(): String = "1.2.840.113549.1.1.11"
-        override fun getSigAlgParams(): ByteArray? = null
-        override fun getIssuerUniqueID(): BooleanArray? = null
-        override fun getSubjectUniqueID(): BooleanArray? = null
-        override fun getKeyUsage(): BooleanArray? = null
-        override fun getBasicConstraints(): Int = -1
-        override fun getEncoded(): ByteArray = ByteArray(0)
-        override fun verify(key: PublicKey?) {}
-        override fun verify(key: PublicKey?, sigProvider: String?) {}
     }
 }

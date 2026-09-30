@@ -141,14 +141,7 @@ class TransportManager(val context: Context) {
         _statusMessage.value = "Connecting to ${device.name}..."
 
         scope.launch(Dispatchers.IO) {
-            // Step 1: Try Remote v2 connection (Lowest latency)
-            val v2Success = remoteV2Client.connect(device.host, device.remoteV2Port)
-            if (v2Success) {
-                Log.d(TAG, "Remote v2 connected successfully")
-                saveDevice(device.copy(isPairedRemoteV2 = true, lastConnected = System.currentTimeMillis()))
-            }
-
-            // Step 2: Try ADB connection in parallel/sequence for power features
+            // Step 1: Connect to ADB (USB/Wireless debugging on port 5555)
             val adbSuccess = adbClient.connect(device.host, device.adbPort)
             if (adbSuccess) {
                 Log.d(TAG, "ADB connected successfully")
@@ -166,37 +159,65 @@ class TransportManager(val context: Context) {
                 }
             }
 
-            if (v2Success || adbSuccess) {
+            // Step 2: Connect to Remote v2 (Lowest latency protocol on port 6466)
+            var v2Success = false
+            if (device.isPairedRemoteV2) {
+                v2Success = remoteV2Client.connect(device.host, device.remoteV2Port)
+                if (v2Success) {
+                    Log.d(TAG, "Remote v2 connected successfully")
+                    saveDevice(device.copy(lastConnected = System.currentTimeMillis()))
+                }
+            }
+
+            if (adbSuccess || v2Success) {
                 _connectionStatus.value = ConnectionStatus.CONNECTED
                 val mode = when {
                     v2Success && adbSuccess -> "Hybrid (Remote v2 + ADB)"
-                    v2Success -> "Remote v2"
-                    else -> "ADB Shell"
+                    adbSuccess -> "ADB Shell (Ready to control TV)"
+                    else -> "Remote v2"
                 }
                 _statusMessage.value = "Connected via $mode"
             } else {
                 _connectionStatus.value = ConnectionStatus.ERROR
-                _statusMessage.value = "Not connected. Tap 'Pair' to show code on TV, or enable ADB on port 5555."
+                _statusMessage.value = "Connection failed. Ensure TV is turned on and ADB (port 5555) is enabled."
             }
         }
     }
 
-    suspend fun pairRemoteV2(device: TvDevice, onCodeRequested: suspend () -> String): Boolean {
+    suspend fun pairRemoteV2(device: TvDevice, onCodeRequested: suspend () -> String): Boolean = withContext(Dispatchers.IO) {
+        _statusMessage.value = "Probing TV pairing port 6467 on ${device.host}..."
+
+        // Quick TCP probe to verify port 6467 is reachable
+        val portOpen = try {
+            java.net.Socket().use { s ->
+                s.connect(java.net.InetSocketAddress(device.host, 6467), 3000)
+                true
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Port 6467 unreachable: ${e.message}")
+            false
+        }
+
+        if (!portOpen) {
+            _statusMessage.value = "TV pairing port 6467 is not accessible. Device is controlled via ADB Shell."
+            return@withContext false
+        }
+
         _statusMessage.value = "Connecting to TV pairing service (port 6467)..."
         val paired = remoteV2Client.startPairing(device.host, 6467, onCodeRequested)
         if (paired) {
-            saveDevice(device.copy(isPairedRemoteV2 = true))
+            val updated = device.copy(isPairedRemoteV2 = true, lastConnected = System.currentTimeMillis())
+            saveDevice(updated)
             _statusMessage.value = "Pairing successful! Connecting to TV..."
-            connectToDevice(device)
+            connectToDevice(updated)
         } else {
-            _statusMessage.value = "Pairing failed. Ensure TV and Phone are on same Wi-Fi network."
+            _statusMessage.value = "Pairing failed. If USB debugging is on, you can control the TV directly via ADB."
         }
-        return paired
+        paired
     }
 
     suspend fun pairAdbWireless(host: String, port: Int, code: String): Boolean = withContext(Dispatchers.IO) {
         _statusMessage.value = "Pairing ADB wireless on port $port..."
-        // Connect to ADB pairing port with TLS
         val res = adbClient.connect(host, port)
         if (res) {
             _statusMessage.value = "ADB Wireless paired!"
@@ -211,12 +232,20 @@ class TransportManager(val context: Context) {
     fun sendNavigationKey(keyCode: Int, remoteKeyName: String? = null) {
         scope.launch(Dispatchers.IO) {
             try {
-                if (remoteV2Client.isConnected.value) {
-                    remoteV2Client.sendKey(keyCode, RemoteDirection.SHORT)
-                } else if (adbClient.isConnected()) {
-                    adbClient.executeShell("input keyevent $keyCode")
-                } else {
-                    Log.w(TAG, "Cannot send key $keyCode: Not connected")
+                var sent = false
+                // Try Remote v2 if paired and connected
+                if (activeDevice.value?.isPairedRemoteV2 == true && remoteV2Client.isConnected.value) {
+                    sent = remoteV2Client.sendKey(keyCode, RemoteDirection.SHORT)
+                }
+
+                // Fall back to ADB Shell (Instant key injection)
+                if (!sent && adbClient.isConnected()) {
+                    val res = adbClient.executeShell("input keyevent $keyCode")
+                    if (!res.success) {
+                        Log.w(TAG, "ADB keyevent failed: ${res.output}")
+                    }
+                } else if (!sent && !adbClient.isConnected()) {
+                    Log.w(TAG, "Cannot send key $keyCode: Not connected to TV")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error sending key: ${e.message}")
@@ -227,9 +256,11 @@ class TransportManager(val context: Context) {
     fun sendText(text: String) {
         scope.launch(Dispatchers.IO) {
             try {
-                if (remoteV2Client.isConnected.value) {
-                    remoteV2Client.sendText(text)
-                } else if (adbClient.isConnected()) {
+                var sent = false
+                if (activeDevice.value?.isPairedRemoteV2 == true && remoteV2Client.isConnected.value) {
+                    sent = remoteV2Client.sendText(text)
+                }
+                if (!sent && adbClient.isConnected()) {
                     val escaped = text.replace(" ", "%s").replace("'", "\\'")
                     adbClient.executeShell("input text '$escaped'")
                 }

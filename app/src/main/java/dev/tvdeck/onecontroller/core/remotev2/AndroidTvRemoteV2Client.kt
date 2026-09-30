@@ -57,21 +57,21 @@ class AndroidTvRemoteV2Client(private val context: Context) {
             }
 
             pairingSocket = sslContext.socketFactory.createSocket() as SSLSocket
-            pairingSocket.soTimeout = 15000
+            pairingSocket.soTimeout = 30000
             pairingSocket.connect(InetSocketAddress(host, port), 8000)
             pairingSocket.startHandshake()
 
             val inStream = pairingSocket.inputStream
             val outStream = pairingSocket.outputStream
 
-            // 1. Send PairingRequest
+            // 1. Send PairingRequest (field 10)
             val pairingReqPayload = ByteArrayOutputStream().apply {
                 ProtobufHelper.writeStringField(this, 1, "atvremote") // service_name MUST be atvremote
                 ProtobufHelper.writeStringField(this, 2, "OneController") // client_name
             }.toByteArray()
 
             val outerReq = ByteArrayOutputStream().apply {
-                ProtobufHelper.writeIntField(this, 1, 1) // protocol_version = 1
+                ProtobufHelper.writeIntField(this, 1, 2) // protocol_version = 2 (Android TV Remote v2 standard)
                 ProtobufHelper.writeIntField(this, 2, 200) // STATUS_OK
                 ProtobufHelper.writeMessageField(this, 10, pairingReqPayload) // pairing_request (field 10)
             }.toByteArray()
@@ -94,8 +94,8 @@ class AndroidTvRemoteV2Client(private val context: Context) {
             }.toByteArray()
 
             val outerOptions = ByteArrayOutputStream().apply {
-                ProtobufHelper.writeIntField(this, 1, 1)
-                ProtobufHelper.writeIntField(this, 2, 200)
+                ProtobufHelper.writeIntField(this, 1, 2) // protocol_version = 2
+                ProtobufHelper.writeIntField(this, 2, 200) // STATUS_OK
                 ProtobufHelper.writeMessageField(this, 20, optionsPayload) // options (field 20)
             }.toByteArray()
 
@@ -117,8 +117,8 @@ class AndroidTvRemoteV2Client(private val context: Context) {
             }.toByteArray()
 
             val outerConfig = ByteArrayOutputStream().apply {
-                ProtobufHelper.writeIntField(this, 1, 1)
-                ProtobufHelper.writeIntField(this, 2, 200)
+                ProtobufHelper.writeIntField(this, 1, 2) // protocol_version = 2
+                ProtobufHelper.writeIntField(this, 2, 200) // STATUS_OK
                 ProtobufHelper.writeMessageField(this, 30, configPayload) // configuration (field 30)
             }.toByteArray()
 
@@ -129,16 +129,16 @@ class AndroidTvRemoteV2Client(private val context: Context) {
             Log.d(TAG, "ConfigurationAck received (${confAck.size} bytes). TV is now displaying 6-character code on screen.")
 
             // 7. Request pairing code from user
-            val code = onCodeRequested().trim().uppercase()
-            if (code.length < 6) {
-                Log.e(TAG, "Invalid pairing code: $code")
+            val rawCode = onCodeRequested().trim().uppercase().replace(" ", "").removePrefix("0X")
+            if (rawCode.length != 6) {
+                Log.e(TAG, "Invalid pairing code: $rawCode (expected 6 hex characters)")
                 return@withContext false
             }
 
             // 8. Compute Secret Hash
             val (_, clientCert) = CryptoManager.getOrCreateRemoteV2KeyAndCert(context)
             val sCert = capturedServerCert ?: (pairingSocket.session.peerCertificates[0] as X509Certificate)
-            val secretBytes = CryptoManager.computePoloSecret(clientCert, sCert, code)
+            val secretBytes = CryptoManager.computePoloSecret(clientCert, sCert, rawCode)
 
             // 9. Send Secret (field 40)
             val secretPayload = ByteArrayOutputStream().apply {
@@ -146,8 +146,8 @@ class AndroidTvRemoteV2Client(private val context: Context) {
             }.toByteArray()
 
             val outerSecret = ByteArrayOutputStream().apply {
-                ProtobufHelper.writeIntField(this, 1, 1)
-                ProtobufHelper.writeIntField(this, 2, 200)
+                ProtobufHelper.writeIntField(this, 1, 2) // protocol_version = 2
+                ProtobufHelper.writeIntField(this, 2, 200) // STATUS_OK
                 ProtobufHelper.writeMessageField(this, 40, secretPayload) // secret (field 40)
             }.toByteArray()
 
@@ -384,11 +384,11 @@ class AndroidTvRemoteV2Client(private val context: Context) {
     // Public Commands
     // -------------------------------------------------------------
 
-    fun sendKey(keyCode: Int, direction: RemoteDirection = RemoteDirection.SHORT) {
-        val socket = remoteSocket ?: return
-        if (!socket.isConnected) return
+    fun sendKey(keyCode: Int, direction: RemoteDirection = RemoteDirection.SHORT): Boolean {
+        val socket = remoteSocket ?: return false
+        if (!socket.isConnected) return false
 
-        try {
+        return try {
             val keyInject = ByteArrayOutputStream().apply {
                 ProtobufHelper.writeIntField(this, 1, keyCode.toLong())
                 ProtobufHelper.writeIntField(this, 2, direction.value.toLong())
@@ -399,16 +399,18 @@ class AndroidTvRemoteV2Client(private val context: Context) {
             }.toByteArray()
 
             sendRemoteFrame(socket.outputStream, outer)
+            true
         } catch (e: Exception) {
             Log.e(TAG, "Error sending key $keyCode: ${e.message}")
+            false
         }
     }
 
-    fun sendText(text: String) {
-        val socket = remoteSocket ?: return
-        if (!socket.isConnected) return
+    fun sendText(text: String): Boolean {
+        val socket = remoteSocket ?: return false
+        if (!socket.isConnected) return false
 
-        try {
+        return try {
             val imeObject = ByteArrayOutputStream().apply {
                 ProtobufHelper.writeIntField(this, 1, 0)
                 ProtobufHelper.writeIntField(this, 2, 0)
@@ -431,8 +433,10 @@ class AndroidTvRemoteV2Client(private val context: Context) {
             }.toByteArray()
 
             sendRemoteFrame(socket.outputStream, outer)
+            true
         } catch (e: Exception) {
             Log.e(TAG, "Error sending text: ${e.message}")
+            false
         }
     }
 

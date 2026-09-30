@@ -15,6 +15,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            android.util.Log.e("MainActivity", "Uncaught exception on ${thread.name}: ${throwable.message}", throwable)
+        }
+
         transportManager = TransportManager.getInstance(this)
 
         setContent {
