@@ -57,6 +57,7 @@ class AndroidTvRemoteV2Client(private val context: Context) {
             }
 
             pairingSocket = sslContext.socketFactory.createSocket() as SSLSocket
+            pairingSocket.soTimeout = 15000
             pairingSocket.connect(InetSocketAddress(host, port), 8000)
             pairingSocket.startHandshake()
 
@@ -65,14 +66,14 @@ class AndroidTvRemoteV2Client(private val context: Context) {
 
             // 1. Send PairingRequest
             val pairingReqPayload = ByteArrayOutputStream().apply {
-                ProtobufHelper.writeStringField(this, 1, "androidtvremote") // service_name
-                ProtobufHelper.writeStringField(this, 2, "OneController")    // client_name
+                ProtobufHelper.writeStringField(this, 1, "atvremote") // service_name MUST be atvremote
+                ProtobufHelper.writeStringField(this, 2, "OneController") // client_name
             }.toByteArray()
 
             val outerReq = ByteArrayOutputStream().apply {
                 ProtobufHelper.writeIntField(this, 1, 1) // protocol_version = 1
                 ProtobufHelper.writeIntField(this, 2, 200) // STATUS_OK
-                ProtobufHelper.writeMessageField(this, 10, pairingReqPayload) // pairing_request
+                ProtobufHelper.writeMessageField(this, 10, pairingReqPayload) // pairing_request (field 10)
             }.toByteArray()
 
             sendPoloFrame(outStream, outerReq)
@@ -81,46 +82,65 @@ class AndroidTvRemoteV2Client(private val context: Context) {
             val ackMsg = readPoloFrame(inStream)
             Log.d(TAG, "Received PairingRequestAck (${ackMsg.size} bytes)")
 
-            // 3. Read Options
-            val optionsMsg = readPoloFrame(inStream)
-            Log.d(TAG, "Received Options (${optionsMsg.size} bytes)")
-
-            // 4. Send Configuration (HEXADECIMAL, 6 chars, Controller role)
+            // 3. Send Options (field 20)
             val encPayload = ByteArrayOutputStream().apply {
-                ProtobufHelper.writeIntField(this, 1, 1) // ENCODING_TYPE_HEXADECIMAL
+                ProtobufHelper.writeIntField(this, 1, 3) // ENCODING_TYPE_HEXADECIMAL = 3
+                ProtobufHelper.writeIntField(this, 2, 6) // symbol_length = 6
+            }.toByteArray()
+
+            val optionsPayload = ByteArrayOutputStream().apply {
+                ProtobufHelper.writeMessageField(this, 1, encPayload) // input_encodings (field 1)
+                ProtobufHelper.writeIntField(this, 3, 1) // preferred_role = ROLE_TYPE_INPUT (field 3)
+            }.toByteArray()
+
+            val outerOptions = ByteArrayOutputStream().apply {
+                ProtobufHelper.writeIntField(this, 1, 1)
+                ProtobufHelper.writeIntField(this, 2, 200)
+                ProtobufHelper.writeMessageField(this, 20, optionsPayload) // options (field 20)
+            }.toByteArray()
+
+            sendPoloFrame(outStream, outerOptions)
+
+            // 4. Read Options from TV
+            val tvOptionsMsg = readPoloFrame(inStream)
+            Log.d(TAG, "Received Options from TV (${tvOptionsMsg.size} bytes)")
+
+            // 5. Send Configuration (field 30)
+            val configEnc = ByteArrayOutputStream().apply {
+                ProtobufHelper.writeIntField(this, 1, 3) // ENCODING_TYPE_HEXADECIMAL = 3
                 ProtobufHelper.writeIntField(this, 2, 6) // symbol_length = 6
             }.toByteArray()
 
             val configPayload = ByteArrayOutputStream().apply {
-                ProtobufHelper.writeMessageField(this, 1, encPayload) // encoding
-                ProtobufHelper.writeIntField(this, 2, 1) // client_role = ROLE_CONTROLLER
+                ProtobufHelper.writeMessageField(this, 1, configEnc) // encoding (field 1)
+                ProtobufHelper.writeIntField(this, 2, 1) // client_role = ROLE_TYPE_INPUT (field 2)
             }.toByteArray()
 
             val outerConfig = ByteArrayOutputStream().apply {
                 ProtobufHelper.writeIntField(this, 1, 1)
                 ProtobufHelper.writeIntField(this, 2, 200)
-                ProtobufHelper.writeMessageField(this, 30, configPayload) // configuration
+                ProtobufHelper.writeMessageField(this, 30, configPayload) // configuration (field 30)
             }.toByteArray()
 
             sendPoloFrame(outStream, outerConfig)
 
-            // 5. Read ConfigurationAck - TV now shows code on screen!
+            // 6. Read ConfigurationAck - TV now shows code on screen!
             val confAck = readPoloFrame(inStream)
-            Log.d(TAG, "ConfigurationAck received. TV should now display pairing code.")
+            Log.d(TAG, "ConfigurationAck received (${confAck.size} bytes). TV is now displaying 6-character code on screen.")
 
-            // 6. Request pairing code from user
+            // 7. Request pairing code from user
             val code = onCodeRequested().trim().uppercase()
             if (code.length < 6) {
                 Log.e(TAG, "Invalid pairing code: $code")
                 return@withContext false
             }
 
-            // 7. Compute Secret Hash
+            // 8. Compute Secret Hash
             val (_, clientCert) = CryptoManager.getOrCreateRemoteV2KeyAndCert(context)
             val sCert = capturedServerCert ?: (pairingSocket.session.peerCertificates[0] as X509Certificate)
             val secretBytes = CryptoManager.computePoloSecret(clientCert, sCert, code)
 
-            // 8. Send Secret
+            // 9. Send Secret (field 40)
             val secretPayload = ByteArrayOutputStream().apply {
                 ProtobufHelper.writeBytesField(this, 1, secretBytes)
             }.toByteArray()
@@ -128,12 +148,12 @@ class AndroidTvRemoteV2Client(private val context: Context) {
             val outerSecret = ByteArrayOutputStream().apply {
                 ProtobufHelper.writeIntField(this, 1, 1)
                 ProtobufHelper.writeIntField(this, 2, 200)
-                ProtobufHelper.writeMessageField(this, 40, secretPayload) // secret
+                ProtobufHelper.writeMessageField(this, 40, secretPayload) // secret (field 40)
             }.toByteArray()
 
             sendPoloFrame(outStream, outerSecret)
 
-            // 9. Read SecretAck
+            // 10. Read SecretAck
             val secretAck = readPoloFrame(inStream)
             Log.d(TAG, "Pairing completed successfully! SecretAck received (${secretAck.size} bytes)")
             true

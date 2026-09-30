@@ -58,7 +58,8 @@ class AdbClient(private val context: Context) {
             val s = Socket()
             s.tcpNoDelay = true
             s.keepAlive = true
-            s.connect(InetSocketAddress(host, port), 5000)
+            s.soTimeout = 4000
+            s.connect(InetSocketAddress(host, port), 4000)
             socket = s
             inStream = BufferedInputStream(s.getInputStream(), 65536)
             outStream = BufferedOutputStream(s.getOutputStream(), 65536)

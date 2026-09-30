@@ -3,6 +3,7 @@ package dev.tvdeck.onecontroller.ui.screens
 import android.view.HapticFeedbackConstants
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
@@ -817,9 +818,3 @@ private fun AppQuickLaunchPill(
         }
     }
 }
-
-private fun Modifier.clickable(onClick: () -> Unit): Modifier = this.then(
-    Modifier.pointerInput(Unit) {
-        detectTapGestures { onClick() }
-    }
-)

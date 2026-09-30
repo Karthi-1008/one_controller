@@ -124,11 +124,13 @@ object CryptoManager {
     fun getSslContext(context: Context, onServerCertReceived: ((X509Certificate) -> Unit)? = null): SSLContext {
         val (kp, cert) = getOrCreateRemoteV2KeyAndCert(context)
 
-        val km = object : X509KeyManager {
+        val km = object : javax.net.ssl.X509ExtendedKeyManager() {
             override fun getClientAliases(keyType: String?, issuers: Array<out Principal>?): Array<String> = arrayOf("client")
             override fun chooseClientAlias(keyType: Array<out String>?, issuers: Array<out Principal>?, socket: java.net.Socket?): String = "client"
+            override fun chooseEngineClientAlias(keyTypes: Array<out String>?, issuers: Array<out Principal>?, engine: javax.net.ssl.SSLEngine?): String = "client"
             override fun getServerAliases(keyType: String?, issuers: Array<out Principal>?): Array<String>? = null
             override fun chooseServerAlias(keyType: String?, issuers: Array<out Principal>?, socket: java.net.Socket?): String? = null
+            override fun chooseEngineServerAlias(keyType: String?, issuers: Array<out Principal>?, engine: javax.net.ssl.SSLEngine?): String? = null
             override fun getCertificateChain(alias: String?): Array<X509Certificate> = arrayOf(cert)
             override fun getPrivateKey(alias: String?): PrivateKey = kp.private
         }
@@ -143,7 +145,7 @@ object CryptoManager {
             override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
         }
 
-        val sslContext = SSLContext.getInstance("TLSv1.3")
+        val sslContext = SSLContext.getInstance("TLS")
         sslContext.init(arrayOf(km), arrayOf(tm), SecureRandom())
         return sslContext
     }

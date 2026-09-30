@@ -17,10 +17,6 @@ class MainActivity : ComponentActivity() {
 
         transportManager = TransportManager.getInstance(this)
 
-        try {
-            OneControllerService.start(this)
-        } catch (_: Exception) {}
-
         setContent {
             OneControllerTheme {
                 MainScreen(transportManager = transportManager)

@@ -30,7 +30,10 @@ class TransportManager(val context: Context) {
         }
     }
 
-    private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
+        Log.e(TAG, "Unhandled coroutine error: ${throwable.message}", throwable)
+    }
+    private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob() + exceptionHandler)
 
     val remoteV2Client = AndroidTvRemoteV2Client(context)
     val adbClient = AdbClient(context)
@@ -173,20 +176,20 @@ class TransportManager(val context: Context) {
                 _statusMessage.value = "Connected via $mode"
             } else {
                 _connectionStatus.value = ConnectionStatus.ERROR
-                _statusMessage.value = "Connection failed. Check IP & Wi-Fi."
+                _statusMessage.value = "Not connected. Tap 'Pair' to show code on TV, or enable ADB on port 5555."
             }
         }
     }
 
     suspend fun pairRemoteV2(device: TvDevice, onCodeRequested: suspend () -> String): Boolean {
-        _statusMessage.value = "Pairing with ${device.name}..."
+        _statusMessage.value = "Connecting to TV pairing service (port 6467)..."
         val paired = remoteV2Client.startPairing(device.host, 6467, onCodeRequested)
         if (paired) {
             saveDevice(device.copy(isPairedRemoteV2 = true))
-            _statusMessage.value = "Pairing successful!"
+            _statusMessage.value = "Pairing successful! Connecting to TV..."
             connectToDevice(device)
         } else {
-            _statusMessage.value = "Pairing failed. Please retry."
+            _statusMessage.value = "Pairing failed. Ensure TV and Phone are on same Wi-Fi network."
         }
         return paired
     }
@@ -207,39 +210,55 @@ class TransportManager(val context: Context) {
 
     fun sendNavigationKey(keyCode: Int, remoteKeyName: String? = null) {
         scope.launch(Dispatchers.IO) {
-            if (remoteV2Client.isConnected.value) {
-                remoteV2Client.sendKey(keyCode, RemoteDirection.SHORT)
-            } else if (adbClient.isConnected()) {
-                adbClient.executeShell("input keyevent $keyCode")
-            } else {
-                Log.w(TAG, "Cannot send key $keyCode: Not connected")
+            try {
+                if (remoteV2Client.isConnected.value) {
+                    remoteV2Client.sendKey(keyCode, RemoteDirection.SHORT)
+                } else if (adbClient.isConnected()) {
+                    adbClient.executeShell("input keyevent $keyCode")
+                } else {
+                    Log.w(TAG, "Cannot send key $keyCode: Not connected")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error sending key: ${e.message}")
             }
         }
     }
 
     fun sendText(text: String) {
         scope.launch(Dispatchers.IO) {
-            if (remoteV2Client.isConnected.value) {
-                remoteV2Client.sendText(text)
-            } else if (adbClient.isConnected()) {
-                val escaped = text.replace(" ", "%s").replace("'", "\\'")
-                adbClient.executeShell("input text '$escaped'")
+            try {
+                if (remoteV2Client.isConnected.value) {
+                    remoteV2Client.sendText(text)
+                } else if (adbClient.isConnected()) {
+                    val escaped = text.replace(" ", "%s").replace("'", "\\'")
+                    adbClient.executeShell("input text '$escaped'")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error sending text: ${e.message}")
             }
         }
     }
 
     fun sendTouchCoordinates(x: Int, y: Int) {
         scope.launch(Dispatchers.IO) {
-            if (adbClient.isConnected()) {
-                adbClient.executeShell("input tap $x $y")
+            try {
+                if (adbClient.isConnected()) {
+                    adbClient.executeShell("input tap $x $y")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error sending tap: ${e.message}")
             }
         }
     }
 
     fun sendSwipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Int = 200) {
         scope.launch(Dispatchers.IO) {
-            if (adbClient.isConnected()) {
-                adbClient.executeShell("input swipe $x1 $y1 $x2 $y2 $durationMs")
+            try {
+                if (adbClient.isConnected()) {
+                    adbClient.executeShell("input swipe $x1 $y1 $x2 $y2 $durationMs")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error sending swipe: ${e.message}")
             }
         }
     }

@@ -141,10 +141,10 @@ fun DevicesScreen(transportManager: TransportManager) {
                             pendingPairingDevice = dev
                             val deferred = CompletableDeferred<String>()
                             pairingCodeDeferred = deferred
-                            showPairingDialog = true
 
                             scope.launch {
                                 transportManager.pairRemoteV2(dev) {
+                                    showPairingDialog = true
                                     deferred.await()
                                 }
                             }
@@ -174,10 +174,10 @@ fun DevicesScreen(transportManager: TransportManager) {
                             pendingPairingDevice = dev
                             val deferred = CompletableDeferred<String>()
                             pairingCodeDeferred = deferred
-                            showPairingDialog = true
 
                             scope.launch {
                                 transportManager.pairRemoteV2(dev) {
+                                    showPairingDialog = true
                                     deferred.await()
                                 }
                             }
