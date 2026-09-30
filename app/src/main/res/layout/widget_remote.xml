@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#202228"
+    android:orientation="vertical"
+    android:padding="8dp">
+
+    <!-- Top bar: Power & Volume -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center">
+
+        <Button
+            android:id="@+id/btn_widget_power"
+            android:layout_width="0dp"
+            android:layout_height="36dp"
+            android:layout_weight="1"
+            android:text="PWR"
+            android:textSize="10sp"
+            android:backgroundTint="#D32F2F"
+            android:textColor="#FFFFFF" />
+
+        <Button
+            android:id="@+id/btn_widget_back"
+            android:layout_width="0dp"
+            android:layout_height="36dp"
+            android:layout_weight="1"
+            android:layout_marginStart="4dp"
+            android:text="BACK"
+            android:textSize="10sp"
+            android:backgroundTint="#333842"
+            android:textColor="#FFFFFF" />
+
+        <Button
+            android:id="@+id/btn_widget_home"
+            android:layout_width="0dp"
+            android:layout_height="36dp"
+            android:layout_weight="1"
+            android:layout_marginStart="4dp"
+            android:text="HOME"
+            android:textSize="10sp"
+            android:backgroundTint="#333842"
+            android:textColor="#FFFFFF" />
+    </LinearLayout>
+
+    <!-- Center D-pad -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:layout_marginTop="4dp">
+
+        <Button
+            android:id="@+id/btn_widget_up"
+            android:layout_width="60dp"
+            android:layout_height="36dp"
+            android:text="▲"
+            android:textSize="12sp"
+            android:backgroundTint="#404654"
+            android:textColor="#FFFFFF" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:orientation="horizontal"
+            android:layout_marginVertical="2dp">
+
+            <Button
+                android:id="@+id/btn_widget_left"
+                android:layout_width="50dp"
+                android:layout_height="36dp"
+                android:text="◀"
+                android:textSize="12sp"
+                android:backgroundTint="#404654"
+                android:textColor="#FFFFFF" />
+
+            <Button
+                android:id="@+id/btn_widget_ok"
+                android:layout_width="50dp"
+                android:layout_height="36dp"
+                android:layout_marginHorizontal="6dp"
+                android:text="OK"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                android:backgroundTint="#2196F3"
+                android:textColor="#FFFFFF" />
+
+            <Button
+                android:id="@+id/btn_widget_right"
+                android:layout_width="50dp"
+                android:layout_height="36dp"
+                android:text="▶"
+                android:textSize="12sp"
+                android:backgroundTint="#404654"
+                android:textColor="#FFFFFF" />
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/btn_widget_down"
+            android:layout_width="60dp"
+            android:layout_height="36dp"
+            android:text="▼"
+            android:textSize="12sp"
+            android:backgroundTint="#404654"
+            android:textColor="#FFFFFF" />
+    </LinearLayout>
+
+    <!-- Bottom: Vol- and Vol+ -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center"
+        android:layout_marginTop="4dp">
+
+        <Button
+            android:id="@+id/btn_widget_vol_down"
+            android:layout_width="0dp"
+            android:layout_height="34dp"
+            android:layout_weight="1"
+            android:text="VOL -"
+            android:textSize="10sp"
+            android:backgroundTint="#2C313C"
+            android:textColor="#E0E0E0" />
+
+        <Button
+            android:id="@+id/btn_widget_vol_up"
+            android:layout_width="0dp"
+            android:layout_height="34dp"
+            android:layout_weight="1"
+            android:layout_marginStart="6dp"
+            android:text="VOL +"
+            android:textSize="10sp"
+            android:backgroundTint="#2C313C"
+            android:textColor="#E0E0E0" />
+    </LinearLayout>
+
+</LinearLayout>

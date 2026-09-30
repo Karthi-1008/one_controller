@@ -1,0 +1,6 @@
+<resources>
+    <style name="Theme.OneController" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:statusBarColor">#121316</item>
+        <item name="android:windowBackground">#121316</item>
+    </style>
+</resources>
